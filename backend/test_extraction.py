@@ -81,7 +81,7 @@ def test_status_calculation():
     print("[PASS] test_status_calculation passed")
 
 
-def test_contract_structure(data: dict):
+def test_contract_structure(data: dict, is_enriched: bool = False):
     """Verify data conforms strictly to the contract requirements."""
     assert "report" in data
     assert "summary" in data
@@ -98,12 +98,28 @@ def test_contract_structure(data: dict):
     assert "total" in data["summary"]
     assert "within_range" in data["summary"]
     assert "outside_range" in data["summary"]
+    assert "unknown" in data["summary"]
     assert "text" in data["summary"]
 
-    # Fields reserved for Member 3 must be empty
-    assert data["summary"]["text"] == ""
-    assert data["related_findings"] == []
-    assert data["doctor_questions"] == []
+    if not is_enriched:
+        # Fields reserved for Member 3 must be empty in plain extraction
+        assert data["summary"]["text"] == ""
+        assert data["related_findings"] == []
+        assert data["doctor_questions"] == []
+        for t in data["tests"]:
+            assert t["medical_explanation"] == ""
+            assert t["simple_explanation"] == ""
+            assert t["history"] == []
+    else:
+        # Fields enriched by Member 3 analysis
+        assert isinstance(data["summary"]["text"], str)
+        assert len(data["summary"]["text"]) > 0
+        assert isinstance(data["related_findings"], list)
+        assert isinstance(data["doctor_questions"], list)
+        for t in data["tests"]:
+            assert isinstance(t["medical_explanation"], str)
+            assert isinstance(t["simple_explanation"], str)
+            assert isinstance(t["history"], list)
 
     # Tests array
     for t in data["tests"]:
@@ -117,11 +133,6 @@ def test_contract_structure(data: dict):
         assert "simple_explanation" in t
         assert "history" in t
 
-        # Member 3 fields empty
-        assert t["medical_explanation"] == ""
-        assert t["simple_explanation"] == ""
-        assert t["history"] == []
-
         # Status must be one of the four allowed values
         assert t["status"] in ("within_range", "below_range", "above_range", "unknown")
 
@@ -129,6 +140,7 @@ def test_contract_structure(data: dict):
     assert data["summary"]["total"] == len(data["tests"])
     assert data["summary"]["within_range"] == sum(1 for t in data["tests"] if t["status"] == "within_range")
     assert data["summary"]["outside_range"] == sum(1 for t in data["tests"] if t["status"] in ("below_range", "above_range"))
+    assert data["summary"]["unknown"] == sum(1 for t in data["tests"] if t["status"] == "unknown")
 
 
 def test_sample_1_cbc():
@@ -137,11 +149,15 @@ def test_sample_1_cbc():
     assert pdf_path.exists(), f"File missing: {pdf_path}"
 
     result = extract_from_pdf(pdf_path, patient_id="P1001")
-    test_contract_structure(result)
+    test_contract_structure(result, is_enriched=False)
 
     assert result["report"]["patient_id"] == "P1001"
     assert result["report"]["report_date"] == "2026-10-15"
     assert result["summary"]["total"] == 7
+    assert result["summary"]["unknown"] == 1
+    assert result["summary"]["within_range"] == 3
+    assert result["summary"]["outside_range"] == 3
+
 
     test_map = {t["test_name"]: t for t in result["tests"]}
     assert "Hemoglobin" in test_map
@@ -168,11 +184,14 @@ def test_sample_2_metabolic():
     assert pdf_path.exists(), f"File missing: {pdf_path}"
 
     result = extract_from_pdf(pdf_path, patient_id="P1002")
-    test_contract_structure(result)
+    test_contract_structure(result, is_enriched=False)
 
     assert result["report"]["patient_id"] == "P1002"
     assert result["report"]["report_date"] == "2026-10-18"
     assert result["summary"]["total"] == 8
+    assert result["summary"]["unknown"] == 0
+    assert result["summary"]["within_range"] == 3
+    assert result["summary"]["outside_range"] == 5
 
     test_map = {t["test_name"]: t for t in result["tests"]}
     assert test_map["Fasting Blood Glucose"]["status"] == "above_range"
@@ -189,11 +208,14 @@ def test_sample_3_thyroid():
     assert pdf_path.exists(), f"File missing: {pdf_path}"
 
     result = extract_from_pdf(pdf_path, patient_id="P1003")
-    test_contract_structure(result)
+    test_contract_structure(result, is_enriched=False)
 
     assert result["report"]["patient_id"] == "P1003"
     assert result["report"]["report_date"] == "2026-10-22"
     assert result["summary"]["total"] == 6
+    assert result["summary"]["unknown"] == 1
+    assert result["summary"]["within_range"] == 3
+    assert result["summary"]["outside_range"] == 2
 
     test_map = {t["test_name"]: t for t in result["tests"]}
     assert test_map["TSH"]["status"] == "above_range"
@@ -215,7 +237,7 @@ def test_api_health():
 
 
 def test_api_upload_endpoint():
-    """Verify POST /api/upload endpoint with sample report."""
+    """Verify POST /api/upload endpoint with sample report returns enriched contract."""
     pdf_path = SAMPLE_DIR / "cbc_report.pdf"
     with open(pdf_path, "rb") as f:
         response = client.post(
@@ -226,10 +248,37 @@ def test_api_upload_endpoint():
 
     assert response.status_code == 200
     data = response.json()
-    test_contract_structure(data)
+    test_contract_structure(data, is_enriched=True)
     assert data["report"]["patient_id"] == "PATIENT-999"
     assert len(data["tests"]) == 7
+    assert data["summary"]["total"] == 7
+    assert data["summary"]["within_range"] == 3
+    assert data["summary"]["outside_range"] == 3
+    assert data["summary"]["unknown"] == 1
+    assert data["summary"]["text"] != ""
     print("[PASS] test_api_upload_endpoint passed")
+
+
+def test_api_upload_fallback_when_analysis_fails():
+    """Verify POST /api/upload returns plain extraction if enrichment fails."""
+    from unittest.mock import patch
+    pdf_path = SAMPLE_DIR / "cbc_report.pdf"
+    with open(pdf_path, "rb") as f:
+        with patch("backend.main.enrich_extracted_report", side_effect=RuntimeError("Simulated analysis error")):
+            response = client.post(
+                "/api/upload",
+                files={"file": ("cbc_report.pdf", f, "application/pdf")},
+                data={"patient_id": "PATIENT-999"}
+            )
+
+    assert response.status_code == 200
+    data = response.json()
+    test_contract_structure(data, is_enriched=False)
+    assert data["report"]["patient_id"] == "PATIENT-999"
+    assert data["summary"]["unknown"] == 1
+    assert data["summary"]["text"] == ""
+    print("[PASS] test_api_upload_fallback_when_analysis_fails passed")
+
 
 
 def test_api_unsupported_file():
@@ -300,6 +349,7 @@ if __name__ == "__main__":
     test_sample_3_thyroid()
     test_api_health()
     test_api_upload_endpoint()
+    test_api_upload_fallback_when_analysis_fails()
     test_api_unsupported_file()
     test_api_empty_file()
     test_api_image_upload_missing_key()

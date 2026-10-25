@@ -287,6 +287,10 @@ def enrich_extracted_report(extracted: Dict[str, Any]) -> Dict[str, Any]:
         "outside_range",
         sum(1 for t in tests if t.get("status") in ("below_range", "above_range")),
     )
+    enriched["summary"]["unknown"] = original_summary.get(
+        "unknown",
+        sum(1 for t in tests if t.get("status") == "unknown"),
+    )
     enriched["summary"]["text"] = _summary_text(enriched, tests)
 
     enriched["related_findings"] = _related_findings(tests)
