@@ -1,12 +1,11 @@
 """
 HealthLens API
-Backend Report Processing Service
-Owner: Member 2 (Report Processing / Backend Owner)
+Unified backend: Member 2 report processing + Member 3 rule-based analysis.
 """
 
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,16 +18,24 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 try:
+    from backend.adapter import enrich_extracted_report
     from backend.extract import extract_report
+    from backend.models import validate_analysis_request_payload
+    from backend.service import analyze_lab_report
 except ImportError:
+    from adapter import enrich_extracted_report
     from extract import extract_report
-
+    from models import validate_analysis_request_payload
+    from service import analyze_lab_report
 
 
 app = FastAPI(
     title="HealthLens API",
-    description="Backend API for medical lab report processing and extraction",
-    version="1.0.0"
+    description=(
+        "Backend API for medical lab report processing, extraction, and "
+        "rule-based analysis. Analysis is educational only and is not Adaption AI."
+    ),
+    version="1.1.0"
 )
 
 # Enable CORS for frontend integration
@@ -103,6 +110,36 @@ async def upload_report(
         raise HTTPException(
             status_code=422,
             detail=f"Failed to process or read report: {str(e)}"
+        )
+
+
+@app.post("/api/v1/analyze")
+def analyze_report(payload: Dict[str, Any]):
+    """Rule-based analysis of an extracted report or prototype biomarker payload.
+
+    Preferred input is the exact dictionary returned by extract_report() /
+    POST /api/upload. Prototype {metadata, biomarkers} bodies remain supported
+    for Member 3 tests. This endpoint does not diagnose or prescribe treatment.
+    """
+    if not isinstance(payload, dict) or not payload:
+        raise HTTPException(status_code=422, detail="Request body must be a JSON object.")
+
+    try:
+        if "tests" in payload or "report" in payload:
+            return enrich_extracted_report(payload)
+        if "metadata" in payload or "biomarkers" in payload:
+            validated = validate_analysis_request_payload(payload)
+            return analyze_lab_report(validated)
+        raise ValueError(
+            "Unrecognized analysis payload. Send the extract_report() contract "
+            "({report, tests, summary}) or a prototype {metadata, biomarkers} body."
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=422, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal analysis processing error: {str(e)}"
         )
 
 
