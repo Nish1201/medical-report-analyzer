@@ -81,5 +81,3 @@ HealthLens/
 ## Important Disclaimer
 HealthLens is intended to support understanding of medical reports. It is not a substitute for professional medical advice, diagnosis, or treatment. Users should consult a qualified healthcare professional when interpreting medical findings or making healthcare decisions.
 
-## Project Status
-Under Development – Features are being implemented and tested as part of a team hackathon project.
