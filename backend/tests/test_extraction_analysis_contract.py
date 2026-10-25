@@ -45,6 +45,7 @@ SAMPLE_DIR = ROOT_DIR / "sample_reports"
 class ExtractionAnalysisContractTests(unittest.TestCase):
     @unittest.skipUnless(FASTAPI_AVAILABLE, "FastAPI is not installed in this environment")
     def test_upload_still_returns_empty_member3_fields(self):
+        """Verifies that POST /api/upload returns the enriched analysis contract by default."""
         pdf_path = SAMPLE_DIR / "cbc_report.pdf"
         with open(pdf_path, "rb") as handle:
             response = client.post(
@@ -54,6 +55,38 @@ class ExtractionAnalysisContractTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         data = response.json()
+        self.assertEqual(data["report"]["patient_id"], "PATIENT-999")
+        self.assertEqual(data["summary"]["total"], 7)
+        self.assertEqual(data["summary"]["within_range"], 3)
+        self.assertEqual(data["summary"]["outside_range"], 3)
+        self.assertEqual(data["summary"]["unknown"], 1)
+        self.assertTrue(data["summary"]["text"])
+        self.assertTrue(data["related_findings"])
+        self.assertTrue(data["doctor_questions"])
+        for test in data["tests"]:
+            self.assertTrue(test["medical_explanation"])
+            self.assertTrue(test["simple_explanation"])
+            self.assertIsInstance(test["history"], list)
+
+    @unittest.skipUnless(FASTAPI_AVAILABLE, "FastAPI is not installed in this environment")
+    def test_upload_fallback_returns_plain_extraction_when_analysis_fails(self):
+        """Verifies that if analysis fails, POST /api/upload falls back to plain extraction."""
+        from unittest.mock import patch
+        pdf_path = SAMPLE_DIR / "cbc_report.pdf"
+        with open(pdf_path, "rb") as handle:
+            with patch("backend.main.enrich_extracted_report", side_effect=RuntimeError("Analysis simulation error")):
+                response = client.post(
+                    "/api/upload",
+                    files={"file": ("cbc_report.pdf", handle, "application/pdf")},
+                    data={"patient_id": "PATIENT-999"},
+                )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["report"]["patient_id"], "PATIENT-999")
+        self.assertEqual(data["summary"]["total"], 7)
+        self.assertEqual(data["summary"]["within_range"], 3)
+        self.assertEqual(data["summary"]["outside_range"], 3)
+        self.assertEqual(data["summary"]["unknown"], 1)
         self.assertEqual(data["summary"]["text"], "")
         self.assertEqual(data["related_findings"], [])
         self.assertEqual(data["doctor_questions"], [])
@@ -61,6 +94,7 @@ class ExtractionAnalysisContractTests(unittest.TestCase):
             self.assertEqual(test["medical_explanation"], "")
             self.assertEqual(test["simple_explanation"], "")
             self.assertEqual(test["history"], [])
+
 
     @unittest.skipUnless(
         FASTAPI_AVAILABLE and PDFPLUMBER_AVAILABLE,

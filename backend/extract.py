@@ -199,6 +199,7 @@ def build_contract_response(
     total = len(tests)
     within_count = sum(1 for t in tests if t.get("status") == "within_range")
     outside_count = sum(1 for t in tests if t.get("status") in ("below_range", "above_range"))
+    unknown_count = sum(1 for t in tests if t.get("status") == "unknown")
 
     return {
         "report": {
@@ -210,6 +211,7 @@ def build_contract_response(
             "total": total,
             "within_range": within_count,
             "outside_range": outside_count,
+            "unknown": unknown_count,
             "text": ""  # Filled by Member 3
         },
         "tests": tests,

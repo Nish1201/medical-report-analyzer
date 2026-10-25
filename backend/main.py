@@ -95,12 +95,11 @@ async def upload_report(
 
     try:
         clean_patient_id = patient_id.strip() or "PATIENT-001"
-        result = extract_report(
+        extracted = extract_report(
             file_input=content,
             filename=filename,
             patient_id=clean_patient_id
         )
-        return result
     except ValueError as ve:
         raise HTTPException(
             status_code=400,
@@ -111,6 +110,15 @@ async def upload_report(
             status_code=422,
             detail=f"Failed to process or read report: {str(e)}"
         )
+
+    # Enrich extracted report using Member 3 rule-based analysis.
+    # If the analysis step fails, return the plain extraction instead of an error.
+    try:
+        enriched = enrich_extracted_report(extracted)
+        return enriched
+    except Exception:
+        return extracted
+
 
 
 @app.post("/api/v1/analyze")
